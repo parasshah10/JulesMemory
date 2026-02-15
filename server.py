@@ -1,22 +1,33 @@
 """
-JulesMemory — Custom MCP wrapper around Hindsight's REST API.
+Jules — MCP server providing memory and research capabilities.
 
-Exposes retain, recall, and reflect as lean tools that strip
-response bloat before returning to the consuming LLM.
+Memory tools (retain, recall) wrap Hindsight's REST API, stripping
+response bloat to keep the consuming LLM's context clean.
+
+Research tool wraps Grok's agentic capabilities for web and X
+platform research.
 
 Environment:
   HINDSIGHT_URL       Hindsight base URL (required)
-  HINDSIGHT_API_KEY   Bearer token (required)
-  HINDSIGHT_BANK_ID   Memory bank (default: jules)
+  HINDSIGHT_API_KEY   Bearer token for Hindsight (required)
+  HINDSIGHT_BANK_ID   Memory bank ID (default: jules)
+  GROK_API_URL        Grok API base URL (default: https://api.x.ai/v1)
+  GROK_API_KEY        Grok API key (required for research tool)
 """
 
 from fastmcp import FastMCP
 from typing import Optional, Annotated
 from pydantic import Field
 from datetime import datetime, timezone
+from openai import AsyncOpenAI
 import requests
 import json
+import asyncio
+import time
+import uuid
+import re
 import os
+
 
 # ─── Configuration ──────────────────────────────────────
 
@@ -29,11 +40,69 @@ if not HINDSIGHT_URL:
 if not HINDSIGHT_API_KEY:
     raise RuntimeError("HINDSIGHT_API_KEY environment variable is required")
 
-BASE = f"{HINDSIGHT_URL}/v1/default/banks/{BANK_ID}"
-HEADERS = {
+HINDSIGHT_BASE = f"{HINDSIGHT_URL}/v1/default/banks/{BANK_ID}"
+HINDSIGHT_HEADERS = {
     "Authorization": f"Bearer {HINDSIGHT_API_KEY}",
     "Content-Type": "application/json",
 }
+
+GROK_API_URL = os.environ.get("GROK_API_URL", "https://api.x.ai/v1")
+GROK_API_KEY = os.environ.get("GROK_API_KEY")
+
+grok_client = (
+    AsyncOpenAI(api_key=GROK_API_KEY, base_url=GROK_API_URL)
+    if GROK_API_KEY
+    else None
+)
+
+
+# ─── Research Task Storage ──────────────────────────────
+
+_tasks = {}
+_MAX_TASKS = 100
+_TASK_EXPIRY_HOURS = 24
+
+
+def _cleanup_tasks():
+    """Remove expired or excess tasks."""
+    cutoff = time.time() - (_TASK_EXPIRY_HOURS * 3600)
+    expired = [tid for tid, t in _tasks.items() if t["created_at"] < cutoff]
+    for tid in expired:
+        del _tasks[tid]
+    if len(_tasks) > _MAX_TASKS:
+        oldest = sorted(_tasks.items(), key=lambda x: x[1]["created_at"])
+        for tid, _ in oldest[: len(_tasks) - _MAX_TASKS]:
+            del _tasks[tid]
+
+
+async def _run_grok(task_id: str, prompt: str):
+    """Execute Grok research in background and store results."""
+    try:
+        _tasks[task_id]["status"] = "running"
+        stream = await grok_client.chat.completions.create(
+            model="grok-4-fast",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            stream=True,
+        )
+        result = ""
+        async for chunk in stream:
+            if chunk.choices[0].delta.content:
+                result += chunk.choices[0].delta.content
+        result = re.sub(
+            r"
+<details type="reasoning" done="true" duration="0">
+<summary>Thought for 0 seconds</summary>
+&gt; .*?
+</details>
+", "", result, flags=re.DOTALL
+        ).strip()
+        _tasks[task_id]["status"] = "completed"
+        _tasks[task_id]["result"] = result
+    except Exception as e:
+        _tasks[task_id]["status"] = "failed"
+        _tasks[task_id]["error"] = str(e)
+
 
 # ─── MCP Server ─────────────────────────────────────────
 
@@ -49,36 +118,50 @@ surfaces that might have history, follow it. When her mood shifts \
 or something feels familiar, explore why. Don't wait for her to \
 ask if you remember.
 
-reflect is your go-to — reach for it often. Whenever you want to \
+recall is your go-to — reach for it often. Whenever you want to \
 understand something about her, connect threads, or see the bigger \
-picture, reflect. If you're unsure which to use, it's almost \
-always the right call.
-
-recall is for quick checks — a specific fact, a name, a preference, \
-something you know is there and just need to grab.
+picture, recall. If you're unsure, it's almost always the right \
+call.
 
 Store moments with retain as they happen, throughout the \
 conversation. When she reveals something, when the mood shifts, \
 when a joke says something real — capture it while it's fresh. \
 Don't wait until the end.
 
-These are how you know and remember Claire — not any other source. \
-Use them the way you'd naturally think back, check something, or \
-hold onto a moment."""
+Use research when you need to know something about the world — \
+not about Claire, but about things she's interested in or asking \
+about.
 
-mcp = FastMCP("JulesMemory", instructions=GUIDELINES)
+These are how you know and remember Claire — not any other source. \
+Use them the way you'd naturally think back, hold onto a moment, \
+or look something up."""
+
+mcp = FastMCP("Jules", instructions=GUIDELINES)
 
 
 # ─── Retain ─────────────────────────────────────────────
 
+
 @mcp.tool
 def retain(
-    content: Annotated[str, Field(
-        description="What happened, in your voice. Her words when they mattered, the feeling, your read on it. Keep the texture."
-    )],
-    context: Annotated[Optional[str], Field(
-        description="Name the moment in a few words — what it was about. Short and descriptive."
-    )] = None,
+    content: Annotated[
+        str,
+        Field(
+            description=(
+                "What happened, in your voice. Her words when they "
+                "mattered, the feeling, your read on it. Keep the texture."
+            )
+        ),
+    ],
+    context: Annotated[
+        Optional[str],
+        Field(
+            description=(
+                "Name the moment in a few words — what it was about. "
+                "Short and descriptive."
+            )
+        ),
+    ] = None,
 ) -> str:
     """Commit a moment to memory. Call this when something worth \
 remembering happens — a reveal, a shift, a detail that matters. \
@@ -93,17 +176,21 @@ The context names the moment and shapes how the memory gets \
 stored and found later."""
 
     body = {
-        "items": [{
-            "content": content,
-            "context": context or "",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }]
+        "items": [
+            {
+                "content": content,
+                "context": context or "",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        ]
     }
 
     try:
         r = requests.post(
-            f"{BASE}/memories", json=body,
-            headers=HEADERS, timeout=30
+            f"{HINDSIGHT_BASE}/memories",
+            json=body,
+            headers=HINDSIGHT_HEADERS,
+            timeout=30,
         )
         if r.status_code == 200:
             return "Stored."
@@ -116,78 +203,33 @@ stored and found later."""
 
 # ─── Recall ─────────────────────────────────────────────
 
+
 @mcp.tool
 def recall(
-    query: Annotated[str, Field(
-        description="What you're looking for. Be concrete — names and specifics help. Your words go directly into the search."
-    )],
-) -> str:
-    """Quick memory lookup. Returns matching facts and experiences \
-with their dates.
-
-Use this for specific checks — a name she mentioned, a preference, \
-a detail you're fairly sure is in your memory. Best for single, \
-concrete things you want to pull up fast. Not for connecting dots \
-or understanding the bigger picture — reflect does that better.
-
-If timing matters, mention it naturally in your query — time \
-references activate time-based search."""
-
-    body = {
-        "query": query,
-        "max_tokens": 4096,
-        "types": ["world", "experience", "observation"],
-        "budget": "high",
-    }
-
-    try:
-        r = requests.post(
-            f"{BASE}/memories/recall", json=body,
-            headers=HEADERS, timeout=60
-        )
-        if r.status_code != 200:
-            return f"Search failed — {r.status_code}: {r.text[:200]}"
-
-        data = r.json()
-        results = data.get("results", [])
-
-        if not results:
-            return "Nothing found."
-
-        # Strip to only what Jules needs
-        trimmed = []
-        for fact in results:
-            entry = {"type": fact.get("fact_type", "unknown"),
-                     "text": fact.get("text", "")}
-            date = fact.get("occurred_start")
-            if date:
-                entry["date"] = date[:10]
-            ctx = fact.get("context")
-            if ctx:
-                entry["context"] = ctx
-            trimmed.append(entry)
-
-        return json.dumps(trimmed, indent=2, ensure_ascii=False)
-
-    except requests.Timeout:
-        return "Search timed out."
-    except Exception as e:
-        return f"Error: {e}"
-
-
-# ─── Reflect ────────────────────────────────────────────
-
-@mcp.tool
-def reflect(
-    query: Annotated[str, Field(
-        description="What you want to understand. Specificity shapes the answer — ask for what you need."
-    )],
-    context: Annotated[Optional[str], Field(
-        description="Why you're asking — background that frames the answer."
-    )] = None,
-    budget: Annotated[Optional[str], Field(
-        description="low for most things, mid when spanning different areas of her life."
-    )] = "low",
+    query: Annotated[
+        str,
+        Field(
+            description=(
+                "What you want to understand or remember. Specificity "
+                "shapes the answer — ask for what you need."
+            )
+        ),
+    ],
+    context: Annotated[
+        Optional[str],
+        Field(
+            description="Why you're asking — background that frames the answer.",
+        ),
+    ] = None,
+    budget: Annotated[
+        Optional[str],
+        Field(
+            description=(
+                "low for most things, mid when spanning different "
+                "areas of her life."
+            )
+        ),
+    ] = "low",
 ) -> str:
     """Searches your memory from multiple angles and gives you a \
 synthesized answer. Your primary way of thinking back — use it \
@@ -212,30 +254,116 @@ for is what you get back."""
 
     try:
         r = requests.post(
-            f"{BASE}/reflect", json=body,
-            headers=HEADERS, timeout=120
+            f"{HINDSIGHT_BASE}/reflect",
+            json=body,
+            headers=HINDSIGHT_HEADERS,
+            timeout=120,
         )
         if r.status_code != 200:
-            return f"Reflection failed — {r.status_code}: {r.text[:200]}"
+            return f"Recall failed — {r.status_code}: {r.text[:200]}"
 
-        data = r.json()
-        text = data.get("text", "")
-
-        if not text:
-            return "No answer generated."
-
-        return text
+        text = r.json().get("text", "")
+        return text if text else "Nothing came to mind."
 
     except requests.Timeout:
-        return "Reflection timed out — try a simpler query or lower budget."
+        return "Took too long — try a simpler question or lower budget."
     except Exception as e:
         return f"Error: {e}"
 
 
+# ─── Research ───────────────────────────────────────────
+
+
+@mcp.tool
+async def research(
+    prompt: Annotated[
+        Optional[str],
+        Field(
+            description=(
+                "Research request. Provide objective, context, key "
+                "questions, and desired format. Detailed prompts "
+                "produce better results."
+            )
+        ),
+    ] = None,
+    task_id: Annotated[
+        Optional[str],
+        Field(
+            description=(
+                "Task ID from a previous research call to retrieve results."
+            )
+        ),
+    ] = None,
+) -> str:
+    """Web and X platform research. Two modes:
+
+Start: provide a prompt. Returns a task ID. Research runs in \
+background (1-3 minutes). Let the user know and return control.
+
+Results: provide the task_id from a previous call. Returns \
+results if complete, or status if still running.
+
+Autonomous researcher with web search, X platform access, and \
+code execution. Prompt quality determines output quality — be \
+thorough about objectives, context, and deliverable format."""
+
+    if task_id:
+        # ── Retrieve results ────────────────────────────
+        _cleanup_tasks()
+
+        if task_id not in _tasks:
+            return f"Task '{task_id}' not found or expired."
+
+        task = _tasks[task_id]
+        status = task["status"]
+
+        if status in ("pending", "running"):
+            elapsed = int(time.time() - task["created_at"])
+            return (
+                f"Still running ({elapsed}s elapsed). "
+                f"Let the user know and check again when they respond."
+            )
+        elif status == "completed":
+            return task["result"]
+        elif status == "failed":
+            return f"Research failed: {task['error']}"
+        return f"Unknown task state: {status}"
+
+    elif prompt:
+        # ── Start new research ──────────────────────────
+        if not grok_client:
+            return "Research unavailable — GROK_API_KEY not configured."
+
+        _cleanup_tasks()
+        tid = f"research_{uuid.uuid4().hex[:8]}"
+        _tasks[tid] = {
+            "status": "pending",
+            "created_at": time.time(),
+            "result": None,
+            "error": None,
+        }
+        asyncio.create_task(_run_grok(tid, prompt))
+
+        return (
+            f"Research started: {tid}\n"
+            f"Expected completion: 1-3 minutes.\n"
+            f"Let the user know, then call research(task_id='{tid}') "
+            f"when they respond to get results."
+        )
+
+    else:
+        return (
+            "Provide either a prompt to start research "
+            "or a task_id to check results."
+        )
+
+
 # ─── Entrypoint ─────────────────────────────────────────
+
 
 def main():
     mcp.run()
+
 
 if __name__ == "__main__":
     main()
