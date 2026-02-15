@@ -89,14 +89,11 @@ async def _run_grok(task_id: str, prompt: str):
         async for chunk in stream:
             if chunk.choices[0].delta.content:
                 result += chunk.choices[0].delta.content
-        result = re.sub(
-            r"
-<details type="reasoning" done="true" duration="0">
-<summary>Thought for 0 seconds</summary>
-&gt; .*?
-</details>
-", "", result, flags=re.DOTALL
-        ).strip()
+        
+        # Remove all <think>...</think> tags from anywhere in response
+        # Matches your original logic exactly
+        result = re.sub(r'<think>.*?</think>', '', result, flags=re.DOTALL).strip()
+
         _tasks[task_id]["status"] = "completed"
         _tasks[task_id]["result"] = result
     except Exception as e:
@@ -266,7 +263,7 @@ for is what you get back."""
         return text if text else "Nothing came to mind."
 
     except requests.Timeout:
-        return "Took too long — try a simpler question or lower budget."
+        return "Recall timed out — try a simpler query or lower budget."
     except Exception as e:
         return f"Error: {e}"
 
@@ -295,7 +292,7 @@ async def research(
         ),
     ] = None,
 ) -> str:
-    """Web and X platform research. Two modes:
+    """Web and X platform research via Grok. Two modes:
 
 Start: provide a prompt. Returns a task ID. Research runs in \
 background (1-3 minutes). Let the user know and return control.
