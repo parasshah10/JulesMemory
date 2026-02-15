@@ -1,7 +1,11 @@
 [project]
-name = "claire-mcp"
+name = "jules-memory"
 version = "0.1.0"
-dependencies = ["fastmcp"]
+description = "MCP wrapper for Jules' Hindsight memory bank"
+dependencies = [
+    "fastmcp",
+    "requests",
+]
 
 [project.scripts]
-claire-mcp = "server:main"
+jules-memory = "server:main"
