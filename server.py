@@ -146,7 +146,8 @@ future recall."""
                 "context": context or "",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
-        ]
+        ],
+         "async": True,
     }
 
     try:
@@ -246,7 +247,7 @@ async def research(
 ) -> str:
     """Web and X platform research via Grok. Two modes: Start — \
 provide a prompt, returns a task ID. Research runs in background \
-(1-3 minutes). Let the user know and return control. Results — \
+(1-3 minutes). Let Claire know and return control. Results — \
 provide the task_id to retrieve. Prompt quality determines \
 output quality — be thorough about objectives and format."""
 
@@ -264,7 +265,7 @@ output quality — be thorough about objectives and format."""
             elapsed = int(time.time() - task["created_at"])
             return (
                 f"Still running ({elapsed}s elapsed). "
-                f"Let the user know and check again when they respond."
+                f"Let Claire know and check again when she responds."
             )
         elif status == "completed":
             return task["result"]
@@ -290,8 +291,8 @@ output quality — be thorough about objectives and format."""
         return (
             f"Research started: {tid}\n"
             f"Expected completion: 1-3 minutes.\n"
-            f"Let the user know, then call research(task_id='{tid}') "
-            f"when they respond to get results."
+            f"Let Claire know, then call research(task_id='{tid}') "
+            f"when she responds to get results."
         )
 
     else:
