@@ -185,15 +185,6 @@ def recall(
             description="Why you're asking — background that frames the answer.",
         ),
     ] = None,
-    budget: Annotated[
-        Optional[str],
-        Field(
-            description=(
-                "low for most things, mid when spanning different "
-                "areas of her life."
-            )
-        ),
-    ] = "low",
 ) -> str:
     """Your primary way of thinking back — use it freely and often. \
 Searches memory from multiple angles and synthesizes an answer. \
@@ -202,10 +193,9 @@ her original words when they matter. Ask for its read on things \
 too. Specificity shapes the answer — what you ask for is what \
 you get back."""
 
-    # Note: This wraps the Hindsight /reflect endpoint for better quality
     body = {
         "query": query,
-        "budget": budget or "low",
+        "budget": "low",
         "max_tokens": 4096,
     }
     if context:
