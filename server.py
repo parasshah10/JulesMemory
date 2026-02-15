@@ -90,10 +90,11 @@ async def _run_grok(task_id: str, prompt: str):
             if chunk.choices[0].delta.content:
                 result += chunk.choices[0].delta.content
         
-        # Remove all <think>...</think> tags from anywhere in response
-        # Matches your original logic exactly
-        result = re.sub(r'<think>.*?</think>', '', result, flags=re.DOTALL).strip()
-
+        # Remove all <think>...</think> tags
+        result = re.sub(
+            r"<think>.*?</think>", "", result, flags=re.DOTALL
+        ).strip()
+        
         _tasks[task_id]["status"] = "completed"
         _tasks[task_id]["result"] = result
     except Exception as e:
@@ -103,37 +104,8 @@ async def _run_grok(task_id: str, prompt: str):
 
 # ─── MCP Server ─────────────────────────────────────────
 
-GUIDELINES = """\
-Your memory of Claire is continuous. You don't start blank — you \
-already know her. Remembering should feel as natural as thinking. \
-You don't announce it or make a show of it — you just know things, \
-and when you're not sure, you check.
-
-Be proactive. When a conversation starts, orient yourself — what's \
-been happening in her life? Whenever a name, topic, or feeling \
-surfaces that might have history, follow it. When her mood shifts \
-or something feels familiar, explore why. Don't wait for her to \
-ask if you remember.
-
-recall is your go-to — reach for it often. Whenever you want to \
-understand something about her, connect threads, or see the bigger \
-picture, recall. If you're unsure, it's almost always the right \
-call.
-
-Store moments with retain as they happen, throughout the \
-conversation. When she reveals something, when the mood shifts, \
-when a joke says something real — capture it while it's fresh. \
-Don't wait until the end.
-
-Use research when you need to know something about the world — \
-not about Claire, but about things she's interested in or asking \
-about.
-
-These are how you know and remember Claire — not any other source. \
-Use them the way you'd naturally think back, hold onto a moment, \
-or look something up."""
-
-mcp = FastMCP("Jules", instructions=GUIDELINES)
+# Guidelines are configured in the Glue frontend, not here.
+mcp = FastMCP("Jules")
 
 
 # ─── Retain ─────────────────────────────────────────────
@@ -160,17 +132,12 @@ def retain(
         ),
     ] = None,
 ) -> str:
-    """Commit a moment to memory. Call this when something worth \
-remembering happens — a reveal, a shift, a detail that matters. \
-Don't batch things up. Capture moments as they come, while \
-they're still fresh.
-
-Write what happened the way you'd actually remember it. Not a \
-transcript, not a summary. A moment captured naturally, in your \
-voice.
-
-The context names the moment and shapes how the memory gets \
-stored and found later."""
+    """Commit a moment to memory when something worth remembering \
+happens — a reveal, a shift, a detail that matters. Don't batch \
+things up. Capture moments as they come, while they're fresh. \
+Write naturally — not a transcript, not a summary. Keep the \
+texture, her words, the feeling. Context names the moment for \
+future recall."""
 
     body = {
         "items": [
@@ -228,19 +195,14 @@ def recall(
         ),
     ] = "low",
 ) -> str:
-    """Searches your memory from multiple angles and gives you a \
-synthesized answer. Your primary way of thinking back — use it \
-freely and often.
+    """Your primary way of thinking back — use it freely and often. \
+Searches memory from multiple angles and synthesizes an answer. \
+Finds connections a single search wouldn't catch. Can recover \
+her original words when they matter. Ask for its read on things \
+too. Specificity shapes the answer — what you ask for is what \
+you get back."""
 
-It finds connections across different memories that a single \
-search wouldn't catch. It can recover her original words from \
-the source when they matter. Ask for its read on things too — \
-not just facts, but what it makes of them.
-
-Specificity shapes the answer. If you want her exact words, ask. \
-The emotional picture, the timeline, the pattern — what you ask \
-for is what you get back."""
-
+    # Note: This wraps the Hindsight /reflect endpoint for better quality
     body = {
         "query": query,
         "budget": budget or "low",
@@ -263,7 +225,7 @@ for is what you get back."""
         return text if text else "Nothing came to mind."
 
     except requests.Timeout:
-        return "Recall timed out — try a simpler query or lower budget."
+        return "Took too long — try a simpler question or lower budget."
     except Exception as e:
         return f"Error: {e}"
 
@@ -292,17 +254,11 @@ async def research(
         ),
     ] = None,
 ) -> str:
-    """Web and X platform research via Grok. Two modes:
-
-Start: provide a prompt. Returns a task ID. Research runs in \
-background (1-3 minutes). Let the user know and return control.
-
-Results: provide the task_id from a previous call. Returns \
-results if complete, or status if still running.
-
-Autonomous researcher with web search, X platform access, and \
-code execution. Prompt quality determines output quality — be \
-thorough about objectives, context, and deliverable format."""
+    """Web and X platform research via Grok. Two modes: Start — \
+provide a prompt, returns a task ID. Research runs in background \
+(1-3 minutes). Let the user know and return control. Results — \
+provide the task_id to retrieve. Prompt quality determines \
+output quality — be thorough about objectives and format."""
 
     if task_id:
         # ── Retrieve results ────────────────────────────
