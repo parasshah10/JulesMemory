@@ -1,11 +1,12 @@
 [project]
-name = "jules-memory"
+name = "jules"
 version = "0.1.0"
-description = "MCP wrapper for Jules' Hindsight memory bank"
+description = "MCP server for Jules — memory and research capabilities"
 dependencies = [
     "fastmcp",
     "requests",
+    "openai",
 ]
 
 [project.scripts]
-jules-memory = "server:main"
+jules = "server:main"
