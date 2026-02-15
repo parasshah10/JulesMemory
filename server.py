@@ -5,8 +5,8 @@ Exposes retain, recall, and reflect as lean tools that strip
 response bloat before returning to the consuming LLM.
 
 Environment:
-  HINDSIGHT_URL       Hindsight base URL (default: https://lidyje-hs.hf.space)
-  HINDSIGHT_API_KEY   Bearer token (default: claire)
+  HINDSIGHT_URL       Hindsight base URL (required)
+  HINDSIGHT_API_KEY   Bearer token (required)
   HINDSIGHT_BANK_ID   Memory bank (default: jules)
 """
 
@@ -93,14 +93,16 @@ The context names the moment and shapes how the memory gets \
 stored and found later."""
 
     body = {
-        "content": content,
-        "context": context or "",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "items": [{
+            "content": content,
+            "context": context or "",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }]
     }
 
     try:
         r = requests.post(
-            f"{BASE}/retain", json=body,
+            f"{BASE}/memories", json=body,
             headers=HEADERS, timeout=30
         )
         if r.status_code == 200:
@@ -140,7 +142,7 @@ references activate time-based search."""
 
     try:
         r = requests.post(
-            f"{BASE}/recall", json=body,
+            f"{BASE}/memories/recall", json=body,
             headers=HEADERS, timeout=60
         )
         if r.status_code != 200:
