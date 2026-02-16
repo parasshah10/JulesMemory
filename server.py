@@ -368,7 +368,7 @@ shapes the answer — what you ask for is what you get back."""
             "query": query,
             "max_tokens": 8192,
             "types": ["world", "experience", "observation"],
-            "budget": "high",
+            "include": {"chunks": {}},
         }
 
         try:
