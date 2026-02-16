@@ -400,6 +400,7 @@ sharpens results. Simple checks and deep questions both work."""
         body = {
             "query": query,
             "max_tokens": 8192,
+            "budget": "high",
             "types": ["world", "experience", "observation"],
             "include": {"chunks": {}},
         }
