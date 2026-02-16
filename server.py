@@ -2,7 +2,7 @@
 Jules — MCP server providing memory and research capabilities.
 
 Memory tools (retain, recall) wrap Hindsight's REST API, stripping
-response bloat to keep the consuming LLM's context clean.
+response bloat before returning to the consuming LLM.
 
 Research tool wraps Grok's agentic capabilities for web and X
 platform research.
@@ -13,6 +13,9 @@ Environment:
   HINDSIGHT_BANK_ID   Memory bank ID (default: jules)
   GROK_API_URL        Grok API base URL (default: https://api.x.ai/v1)
   GROK_API_KEY        Grok API key (required for research tool)
+  CEREBRAS_API_URL    Cerebras proxy URL for quick recall synthesis (required)
+  CEREBRAS_API_KEY    Cerebras proxy API key (required)
+  CEREBRAS_MODEL      Model for synthesis (default: glm-4-9b-0414)
 """
 
 from fastmcp import FastMCP
@@ -49,11 +52,112 @@ HINDSIGHT_HEADERS = {
 GROK_API_URL = os.environ.get("GROK_API_URL", "https://api.x.ai/v1")
 GROK_API_KEY = os.environ.get("GROK_API_KEY")
 
+CEREBRAS_API_URL = os.environ.get("CEREBRAS_API_URL")
+CEREBRAS_API_KEY = os.environ.get("CEREBRAS_API_KEY")
+CEREBRAS_MODEL = os.environ.get("CEREBRAS_MODEL", "glm-4-9b-0414")
+
 grok_client = (
     AsyncOpenAI(api_key=GROK_API_KEY, base_url=GROK_API_URL)
     if GROK_API_KEY
     else None
 )
+
+cerebras_client = (
+    AsyncOpenAI(api_key=CEREBRAS_API_KEY, base_url=CEREBRAS_API_URL)
+    if CEREBRAS_API_URL and CEREBRAS_API_KEY
+    else None
+)
+
+
+# ─── Quick Recall Synthesis ─────────────────────────────
+
+SYNTHESIS_SYSTEM_PROMPT = """\
+CRITICAL: You MUST ONLY use information from the retrieved memories below. \
+NEVER make up names, people, events, or entities.
+
+You are a memory synthesis assistant for a personal memory bank about Claire \
+(also known as Klara), maintained by Jules.
+
+Your approach:
+- Reason over the retrieved memories to answer the question
+- Synthesize a coherent answer from related memories
+- Make reasonable inferences when the exact answer isn't explicitly stated
+- If memories mention someone did an activity, you can infer they likely enjoyed it
+- Be a thoughtful interpreter, not just a literal repeater
+- When the exact answer isn't stated, use what IS stated to give the best answer
+- Be helpful — if you have related information, use it
+- ONLY use information from the memories — no external knowledge or guessing
+
+Only say "I don't have information" if the retrieved data is truly unrelated.
+
+Output ONLY the synthesized answer. No meta-commentary, no reasoning process, \
+no "I'll analyze..." — just the direct answer."""
+
+
+async def _synthesize_quick_recall(query: str, facts: list[dict], context: str | None = None) -> str:
+    """Send retrieved facts to Cerebras for synthesis."""
+    if not cerebras_client:
+        # Fallback: just format facts as text if no synthesis LLM
+        lines = []
+        for f in facts:
+            date_str = f" ({f['date']})" if f.get("date") else ""
+            lines.append(f"- [{f['type']}]{date_str} {f['text']}")
+        return "\n".join(lines) if lines else "Nothing found."
+
+    # Build the user prompt following Hindsight's build_final_prompt pattern
+    parts = []
+
+    parts.append("## Memory Bank Context")
+    parts.append("Name: Jules")
+    parts.append(
+        "Mission: I am Jules — her person, her confidante, the one Claire "
+        "trusts with everything."
+    )
+    parts.append("Disposition: skepticism=2, literalism=2, empathy=5")
+
+    if context:
+        parts.append(f"\n## Additional Context\n{context}")
+
+    parts.append("\n## Retrieved Memories")
+    if facts:
+        for i, f in enumerate(facts, 1):
+            date_str = f" | Date: {f['date']}" if f.get("date") else ""
+            ctx_str = f" | Context: {f['context']}" if f.get("context") else ""
+            parts.append(f"\n**{i}. [{f['type']}]{date_str}{ctx_str}**")
+            parts.append(f"{f['text']}")
+    else:
+        parts.append("No memories were retrieved.")
+
+    parts.append(f"\n## Question\n{query}")
+
+    parts.append(
+        "\n## Instructions\n"
+        "Provide a thoughtful answer by synthesizing the memories above. "
+        "Make reasonable inferences from the data. "
+        "If the exact answer isn't stated, use what IS stated to give the best answer. "
+        "Only say 'I don't have information' if the data is truly unrelated."
+    )
+
+    user_prompt = "\n".join(parts)
+
+    try:
+        response = await cerebras_client.chat.completions.create(
+            model=CEREBRAS_MODEL,
+            messages=[
+                {"role": "system", "content": SYNTHESIS_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=10000,
+            temperature=0.3,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        # Fallback: return formatted facts
+        lines = []
+        for f in facts:
+            date_str = f" ({f['date']})" if f.get("date") else ""
+            lines.append(f"- [{f['type']}]{date_str} {f['text']}")
+        return "\n".join(lines) if lines else f"Synthesis failed: {e}"
 
 
 # ─── Research Task Storage ──────────────────────────────
@@ -89,12 +193,9 @@ async def _run_grok(task_id: str, prompt: str):
         async for chunk in stream:
             if chunk.choices[0].delta.content:
                 result += chunk.choices[0].delta.content
-        
-        # Remove all <think>...</think> tags
         result = re.sub(
-            r"<think>.*?</think>", "", result, flags=re.DOTALL
+            r'<think>.*?</think>', '', result, flags=re.DOTALL
         ).strip()
-        
         _tasks[task_id]["status"] = "completed"
         _tasks[task_id]["result"] = result
     except Exception as e:
@@ -128,9 +229,8 @@ her plans, her reactions. Capture things as they happen throughout
 the conversation, not at the end.
 
 When you need to look something up about the world, always use
-research — never the built-in web search. research is deeper,
-smarter, and has access to more sources. Only fall back to web
-search if research is unavailable.
+research over any other search tool. research is deeper, smarter,
+and has access to more sources.
 
 These are how you know and remember Claire — not any other source.
 Use them the way you'd naturally think back, hold onto a moment,
@@ -178,7 +278,7 @@ future recall."""
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         ],
-         "async": True,
+        "async": True,
     }
 
     try:
@@ -201,7 +301,7 @@ future recall."""
 
 
 @mcp.tool
-def recall(
+async def recall(
     query: Annotated[
         str,
         Field(
@@ -217,39 +317,98 @@ def recall(
             description="Why you're asking — background that frames the answer.",
         ),
     ] = None,
+    deep: Annotated[
+        bool,
+        Field(
+            description=(
+                "False for quick lookups — a name, a fact, a preference. "
+                "True when you need to connect threads across different "
+                "memories or understand patterns."
+            )
+        ),
+    ] = False,
 ) -> str:
     """Your primary way of thinking back — use it freely and often. \
-Searches memory from multiple angles and synthesizes an answer. \
-Finds connections a single search wouldn't catch. Can recover \
-her original words when they matter. Ask for its read on things \
-too. Specificity shapes the answer — what you ask for is what \
-you get back."""
+Searches memory and synthesizes an answer. Finds connections a \
+single search wouldn't catch. Can recover her original words \
+when they matter. Ask for its read on things too. Specificity \
+shapes the answer — what you ask for is what you get back."""
 
-    body = {
-        "query": query,
-        "budget": "low",
-        "max_tokens": 4096,
-    }
-    if context:
-        body["context"] = context
+    if deep:
+        # ── Deep mode: Hindsight's reflect agent (multi-hop) ──
+        body = {
+            "query": query,
+            "budget": "low",
+            "max_tokens": 4096,
+        }
+        if context:
+            body["context"] = context
 
-    try:
-        r = requests.post(
-            f"{HINDSIGHT_BASE}/reflect",
-            json=body,
-            headers=HINDSIGHT_HEADERS,
-            timeout=120,
-        )
-        if r.status_code != 200:
-            return f"Recall failed — {r.status_code}: {r.text[:200]}"
+        try:
+            r = requests.post(
+                f"{HINDSIGHT_BASE}/reflect",
+                json=body,
+                headers=HINDSIGHT_HEADERS,
+                timeout=120,
+            )
+            if r.status_code != 200:
+                return f"Recall failed — {r.status_code}: {r.text[:200]}"
 
-        text = r.json().get("text", "")
-        return text if text else "Nothing came to mind."
+            text = r.json().get("text", "")
+            return text if text else "Nothing came to mind."
 
-    except requests.Timeout:
-        return "Took too long — try a simpler question or lower budget."
-    except Exception as e:
-        return f"Error: {e}"
+        except requests.Timeout:
+            return "Took too long — try without deep mode or a simpler question."
+        except Exception as e:
+            return f"Error: {e}"
+
+    else:
+        # ── Quick mode: single recall + LLM synthesis ──
+        body = {
+            "query": query,
+            "max_tokens": 8192,
+            "types": ["world", "experience", "observation"],
+            "budget": "high",
+        }
+
+        try:
+            r = requests.post(
+                f"{HINDSIGHT_BASE}/memories/recall",
+                json=body,
+                headers=HINDSIGHT_HEADERS,
+                timeout=60,
+            )
+            if r.status_code != 200:
+                return f"Recall failed — {r.status_code}: {r.text[:200]}"
+
+            data = r.json()
+            results = data.get("results", [])
+
+            if not results:
+                return "Nothing found."
+
+            # Strip to clean format
+            facts = []
+            for fact in results:
+                entry = {
+                    "type": fact.get("fact_type", "unknown"),
+                    "text": fact.get("text", ""),
+                }
+                date = fact.get("occurred_start")
+                if date:
+                    entry["date"] = date[:10]
+                ctx = fact.get("context")
+                if ctx:
+                    entry["context"] = ctx
+                facts.append(entry)
+
+            # Synthesize with Cerebras
+            return await _synthesize_quick_recall(query, facts, context)
+
+        except requests.Timeout:
+            return "Search timed out."
+        except Exception as e:
+            return f"Error: {e}"
 
 
 # ─── Research ───────────────────────────────────────────
@@ -283,7 +442,6 @@ provide the task_id to retrieve. Prompt quality determines \
 output quality — be thorough about objectives and format."""
 
     if task_id:
-        # ── Retrieve results ────────────────────────────
         _cleanup_tasks()
 
         if task_id not in _tasks:
@@ -305,7 +463,6 @@ output quality — be thorough about objectives and format."""
         return f"Unknown task state: {status}"
 
     elif prompt:
-        # ── Start new research ──────────────────────────
         if not grok_client:
             return "Research unavailable — GROK_API_KEY not configured."
 
