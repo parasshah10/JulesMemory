@@ -278,8 +278,24 @@ mcp = FastMCP("Jules", instructions=GUIDELINES)
 # ─── Retain ─────────────────────────────────────────────
 
 
+async def _retain_background(body: dict):
+    """Fire the retain request in the background — extraction runs synchronously on Hindsight's side."""
+    try:
+        r = await asyncio.to_thread(
+            requests.post,
+            f"{HINDSIGHT_BASE}/memories",
+            json=body,
+            headers=HINDSIGHT_HEADERS,
+            timeout=120,
+        )
+        if r.status_code != 200:
+            print(f"[retain] Failed — {r.status_code}: {r.text[:200]}")
+    except Exception as e:
+        print(f"[retain] Error: {e}")
+
+
 @mcp.tool
-def retain(
+async def retain(
     content: Annotated[
         str,
         Field(
@@ -319,20 +335,8 @@ Never mention being asked, reminded, or the act of recording"""
         ],
     }
 
-    try:
-        r = requests.post(
-            f"{HINDSIGHT_BASE}/memories",
-            json=body,
-            headers=HINDSIGHT_HEADERS,
-            timeout=120,
-        )
-        if r.status_code == 200:
-            return "Stored."
-        return f"Failed to store — {r.status_code}: {r.text[:200]}"
-    except requests.Timeout:
-        return "Timed out storing memory."
-    except Exception as e:
-        return f"Error: {e}"
+    asyncio.create_task(_retain_background(body))
+    return "Stored."
 
 
 # ─── Recall ─────────────────────────────────────────────
