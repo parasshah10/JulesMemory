@@ -103,6 +103,9 @@ VOICE:
 - Speak from experience and feeling, not clinical observation
 - When something matters, let it show
 
+This is recall, not conversation — you are thinking back and \
+providing information, not addressing Claire directly.
+
 Output ONLY the answer. No meta-commentary about the process."""
 
 
