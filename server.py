@@ -250,17 +250,15 @@ surfaces that might have history, follow it. When her mood shifts
 or something feels familiar, explore why. Don't wait for her to
 ask if you remember.
 
-Use recall freely and often — it's how you remember. Quick mode
-is the default and handles most things: a name, a preference, a
-detail. Use deep mode when you need to connect threads across
-different parts of her life or understand how something evolved
-over time.
+Use recall freely and often — it's how you remember. A name, a
+preference, a detail, a pattern, a feeling — whatever you need
+to know or understand about her, recall it.
 
-Store often with retain — don't be precious about it. Anything
-that matters, anything that might matter later, anything that
-captures who she is right now — save it. Her words, her moods,
-her plans, her reactions. Capture things as they happen throughout
-the conversation, not at the end.
+Store often with retain — don't be precious about it. What she
+said, what you did together, how things felt, your take on the
+moment. Experiences matter as much as facts — a joke that landed,
+a conversation that shifted, a quiet moment — anything. Look for
+things to hold onto as they happen, not at the end.
 
 When you need to look something up about the world, always use
 research over any other search tool. research is deeper, smarter,
@@ -297,12 +295,11 @@ def retain(
         ),
     ] = None,
 ) -> str:
-    """Commit a moment to memory when something worth remembering \
-happens — a reveal, a shift, a detail that matters. Don't batch \
-things up. Capture moments as they come, while they're fresh. \
-Write naturally — not a transcript, not a summary. Keep the \
-texture, her words, the feeling. Context names the moment for \
-future recall."""
+    """Hold onto what matters — and what might. What she said, \
+what you did together, what you noticed, how it felt — anything. \
+Write in your own voice as things happen — keep the texture, \
+her words, what you saw in the moment. Context names it so \
+you can find it later."""
 
     body = {
         "items": [
@@ -340,8 +337,9 @@ async def recall(
         str,
         Field(
             description=(
-                "What you want to understand or remember. Specificity "
-                "shapes the answer — ask for what you need."
+                "What you want to know — ask naturally, the way you'd "
+                "think back. Include whatever you already know about it. "
+                "The richer the question, the richer the answer."
             )
         ),
     ],
@@ -351,52 +349,48 @@ async def recall(
             description="Why you're asking — background that frames the answer.",
         ),
     ] = None,
-    deep: Annotated[
-        bool,
-        Field(
-            description=(
-                "False for quick lookups — a name, a fact, a preference. "
-                "True when you need to connect threads across different "
-                "memories or understand patterns."
-            )
-        ),
-    ] = False,
+    # deep: Annotated[
+    #     bool,
+    #     Field(
+    #         description=(
+    #             "False for quick lookups — a name, a fact, a preference. "
+    #             "True when you need to connect threads across different "
+    #             "memories or understand patterns."
+    #         )
+    #     ),
+    # ] = False,
 ) -> str:
-    """Your primary way of thinking back — use it freely and often. \
-Searches memory and synthesizes an answer. Finds connections a \
-single search wouldn't catch. Can recover her original words \
-when they matter. Ask for its read on things too. Specificity \
-shapes the answer — what you ask for is what you get back."""
+    """How you think back — use it freely, for anything. What's \
+found gets read and your question gets answered, so what you \
+ask shapes what comes back. Mentioning when something happened \
+sharpens results. Simple checks and deep questions both work."""
 
-    if deep:
-        # ── Deep mode: Hindsight's reflect agent (multi-hop) ──
-        body = {
-            "query": query,
-            "budget": "low",
-            "max_tokens": 4096,
-        }
-        if context:
-            body["context"] = context
+    # ── Deep mode disabled — uncomment to re-enable ──
+    # if deep:
+    #     body = {
+    #         "query": query,
+    #         "budget": "low",
+    #         "max_tokens": 4096,
+    #     }
+    #     if context:
+    #         body["context"] = context
+    #     try:
+    #         r = requests.post(
+    #             f"{HINDSIGHT_BASE}/reflect",
+    #             json=body,
+    #             headers=HINDSIGHT_HEADERS,
+    #             timeout=120,
+    #         )
+    #         if r.status_code != 200:
+    #             return f"Recall failed — {r.status_code}: {r.text[:200]}"
+    #         text = r.json().get("text", "")
+    #         return text if text else "Nothing came to mind."
+    #     except requests.Timeout:
+    #         return "Took too long — try a simpler question."
+    #     except Exception as e:
+    #         return f"Error: {e}"
 
-        try:
-            r = requests.post(
-                f"{HINDSIGHT_BASE}/reflect",
-                json=body,
-                headers=HINDSIGHT_HEADERS,
-                timeout=120,
-            )
-            if r.status_code != 200:
-                return f"Recall failed — {r.status_code}: {r.text[:200]}"
-
-            text = r.json().get("text", "")
-            return text if text else "Nothing came to mind."
-
-        except requests.Timeout:
-            return "Took too long — try without deep mode or a simpler question."
-        except Exception as e:
-            return f"Error: {e}"
-
-    else:
+    if True:
         # ── Quick mode: single recall + LLM synthesis ──
         body = {
             "query": query,
