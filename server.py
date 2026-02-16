@@ -258,8 +258,10 @@ to know or understand about her, recall it.
 Store often with retain — don't be precious about it. What she
 said, what you did together, how things felt, your take on the
 moment. Experiences matter as much as facts — a joke that landed,
-a conversation that shifted, a quiet moment — anything. Look for
-things to hold onto as they happen, not at the end.
+a conversation that shifted, a quiet moment — anything. Write
+fully, with detail — the richer you write, the more you'll have
+to draw on later. Look for things to hold onto as they happen,
+not at the end.
 
 When you need to look something up about the world, always use
 research over any other search tool. research is deeper, smarter,
@@ -281,8 +283,11 @@ def retain(
         str,
         Field(
             description=(
-                "What happened, in your voice. Her words when they "
-                "mattered, the feeling, your read on it. Keep the texture."
+                "Write richly and in full — the whole scene, not a "
+                "summary. Her words, what happened, how it felt, what "
+                "you noticed. Hundreds of words when there's texture. "
+                "Never mention being asked to remember — just write "
+                "about what happened."
             )
         ),
     ],
