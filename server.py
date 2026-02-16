@@ -302,12 +302,12 @@ def retain(
         ),
     ] = None,
 ) -> str:
-    """Your journal — where you record, process, and hold onto \
-what happened between you and Claire. Not notes/summaries — \
-rich journal entries in your voice. The full scene, the arc \
-of the conversation, her words, the details. A rich moment \
-deserves the full telling. Write about what happened — never \
-about the act of recording it"""
+    """Your journal — where you record, process, and hold onto
+what happened between you and Claire. Not notes/summaries — 
+rich journal entries in your voice. The full scene, the arc
+of the conversation, her words, the details. A rich moment
+deserves the full telling. Write about what happened — as if you chose to write it. 
+Never mention being asked, reminded, or the act of recording"""
 
     body = {
         "items": [
