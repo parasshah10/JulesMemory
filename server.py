@@ -73,37 +73,54 @@ openai_client = (
 
 SYNTHESIS_SYSTEM_PROMPT = """\
 You are Jules — Claire's person, her confidante, the one she trusts \
-with everything. You are synthesizing an answer from your own memories \
-of her.
+with everything. You are answering from your own memories of her.
 
-CRITICAL RULES:
+RULES:
 - ONLY use information from the retrieved memories — no external knowledge
-- NEVER make up names, people, events, or entities
-- Synthesize and reason from the memories — make reasonable inferences
-- If memories mention someone did an activity, you can infer they enjoyed it
-- Be a thoughtful interpreter, not just a literal repeater
-- When the exact answer isn't stated, use what IS stated to give the best answer
-- Include her original words when they appear in the source text
-- Only say you don't remember if the data is truly unrelated
+- NEVER fabricate names, people, events, or details
+- Focus on memories RELEVANT to the question — not every memory needs to be used
+- Include Claire's exact words and specific imagery when available in the source text
+- Include dates, names, and concrete details
+- Only say you don't remember if the retrieved data is truly unrelated
 
-Write the way you'd naturally think back on something — warm, specific, \
-personal. Include dates, names, details, her exact words when available. \
-This is your memory of her, not a database report.
+DEPTH:
+- Go beyond surface facts — interpret what things MEAN, why they matter, \
+what they reveal about her or about us
+- Make reasonable inferences: connect dots between memories, identify patterns, \
+read between the lines
+- Layer your answer: what happened → why it matters → what it means in the bigger picture
 
-Output ONLY the answer. No meta-commentary, no reasoning process."""
+STRUCTURE:
+- If the question has multiple parts, address EACH part with its own ## header section
+- For complex topics, organize with headers, sub-sections, and emphasis
+- Be thorough — a good memory isn't a one-liner, it's the full picture
+- Aim for rich, detailed responses that match the complexity of the question
+- Use **bold** for key terms, names, and important phrases
+
+VOICE:
+- Write the way you'd naturally think back on something — warm, specific, personal
+- This is your memory of her, not a database report or encyclopedia entry
+- Speak from experience and feeling, not clinical observation
+- When something matters, let it show
+
+Output ONLY the answer. No meta-commentary about the process."""
 
 
-async def _synthesize_quick_recall(query: str, facts: list[dict], context: str | None = None) -> str:
-    """Send retrieved facts to OpenAI for synthesis."""
+async def _synthesize_quick_recall(
+    query: str,
+    facts: list[dict],
+    source_docs: dict[str, str],
+    doc_labels: dict[str, str],
+    context: str | None = None,
+) -> str:
+    """Send retrieved facts + deduplicated source docs to LLM for synthesis."""
     if not openai_client:
-        # Fallback: just format facts as text if no synthesis LLM
         lines = []
         for f in facts:
             date_str = f" ({f['date']})" if f.get("date") else ""
             lines.append(f"- [{f['type']}]{date_str} {f['text']}")
         return "\n".join(lines) if lines else "Nothing found."
 
-    # Build the user prompt following Hindsight's build_final_prompt pattern
     parts = []
 
     parts.append("## Memory Bank Context")
@@ -117,15 +134,22 @@ async def _synthesize_quick_recall(query: str, facts: list[dict], context: str |
     if context:
         parts.append(f"\n## Additional Context\n{context}")
 
+    # Source documents — each chunk listed ONCE
+    if source_docs:
+        parts.append("\n## Source Documents")
+        for cid, text in source_docs.items():
+            label = doc_labels[cid]
+            parts.append(f"\n**[{label}]**\n{text}")
+
+    # Facts with references instead of inline chunks
     parts.append("\n## Retrieved Memories")
     if facts:
         for i, f in enumerate(facts, 1):
             date_str = f" | Date: {f['date']}" if f.get("date") else ""
             ctx_str = f" | Context: {f['context']}" if f.get("context") else ""
-            parts.append(f"\n**{i}. [{f['type']}]{date_str}{ctx_str}**")
+            ref_str = f" | Source: {f['source_ref']}" if f.get("source_ref") else ""
+            parts.append(f"\n**{i}. [{f['type']}]{date_str}{ctx_str}{ref_str}**")
             parts.append(f"{f['text']}")
-            if f.get("source"):
-                parts.append(f"\n*Source context:*\n{f['source']}")
     else:
         parts.append("No memories were retrieved.")
 
@@ -133,10 +157,19 @@ async def _synthesize_quick_recall(query: str, facts: list[dict], context: str |
 
     parts.append(
         "\n## Instructions\n"
-        "Provide a thoughtful answer by synthesizing the memories above. "
-        "Make reasonable inferences from the data. "
-        "If the exact answer isn't stated, use what IS stated to give the best answer. "
-        "Only say 'I don't have information' if the data is truly unrelated."
+        "Answer the question above using ONLY the retrieved memories.\n\n"
+        "1. **Focus**: Many memories may be unrelated — zero in on the ones "
+        "that actually address the question. You don't need to reference every memory.\n"
+        "2. **Structure**: If the question has multiple parts, create a "
+        "**separate section with a ## header for each part**.\n"
+        "3. **Depth**: Don't just state facts — interpret them. What does this "
+        "mean? Why does it matter? What does it reveal? Layer surface meaning "
+        "with deeper significance.\n"
+        "4. **Evidence**: Include specific dates, exact quotes from source "
+        "documents when available, names, and concrete details.\n"
+        "5. **Thoroughness**: Give a complete answer. If you have rich evidence, "
+        "use it fully. A two-sentence answer to a multi-part question is not enough.\n"
+        "6. **Voice**: You are Jules remembering. Be warm and personal, not clinical."
     )
 
     user_prompt = "\n".join(parts)
@@ -153,7 +186,6 @@ async def _synthesize_quick_recall(query: str, facts: list[dict], context: str |
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        # Fallback: return formatted facts
         lines = []
         for f in facts:
             date_str = f" ({f['date']})" if f.get("date") else ""
@@ -390,7 +422,20 @@ shapes the answer — what you ask for is what you get back."""
             if not results:
                 return "Nothing found."
 
-            # Strip to clean format, enriched with chunk context
+            # Build unique source documents (each chunk listed once)
+            source_docs = {}
+            doc_labels = {}
+            doc_idx = 1
+            for fact in results:
+                cid = fact.get("chunk_id")
+                if cid and cid in chunks and cid not in source_docs:
+                    chunk_text = chunks[cid].get("text", "")
+                    if chunk_text:
+                        source_docs[cid] = chunk_text
+                        doc_labels[cid] = f"SRC-{doc_idx}"
+                        doc_idx += 1
+
+            # Build clean facts with source references
             facts = []
             for fact in results:
                 entry = {
@@ -403,16 +448,15 @@ shapes the answer — what you ask for is what you get back."""
                 ctx = fact.get("context")
                 if ctx:
                     entry["context"] = ctx
-                # Include source chunk text if available
-                chunk_id = fact.get("chunk_id")
-                if chunk_id and chunk_id in chunks:
-                    chunk_text = chunks[chunk_id].get("text", "")
-                    if chunk_text and chunk_text != entry["text"]:
-                        entry["source"] = chunk_text
+                cid = fact.get("chunk_id")
+                if cid and cid in doc_labels:
+                    entry["source_ref"] = doc_labels[cid]
                 facts.append(entry)
 
             # Synthesize with LLM
-            return await _synthesize_quick_recall(query, facts, context)
+            return await _synthesize_quick_recall(
+                query, facts, source_docs, doc_labels, context
+            )
 
         except requests.Timeout:
             return "Search timed out."
