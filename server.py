@@ -13,9 +13,9 @@ Environment:
   HINDSIGHT_BANK_ID   Memory bank ID (default: jules)
   GROK_API_URL        Grok API base URL (default: https://api.x.ai/v1)
   GROK_API_KEY        Grok API key (required for research tool)
-  CEREBRAS_API_URL    Cerebras proxy URL for quick recall synthesis (required)
-  CEREBRAS_API_KEY    Cerebras proxy API key (required)
-  CEREBRAS_MODEL      Model for synthesis (default: glm-4-9b-0414)
+  OPENAI_API_URL      OpenAI proxy URL for quick recall synthesis (required)
+  OPENAI_API_KEY      OpenAI proxy API key (required)
+  OPENAI_MODEL        Model for synthesis (default: zai-glm-4.7)
 """
 
 from fastmcp import FastMCP
@@ -52,9 +52,9 @@ HINDSIGHT_HEADERS = {
 GROK_API_URL = os.environ.get("GROK_API_URL", "https://api.x.ai/v1")
 GROK_API_KEY = os.environ.get("GROK_API_KEY")
 
-CEREBRAS_API_URL = os.environ.get("CEREBRAS_API_URL")
-CEREBRAS_API_KEY = os.environ.get("CEREBRAS_API_KEY")
-CEREBRAS_MODEL = os.environ.get("CEREBRAS_MODEL", "glm-4-9b-0414")
+OPENAI_API_URL = os.environ.get("OPENAI_API_URL")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "zai-glm-4.7")
 
 grok_client = (
     AsyncOpenAI(api_key=GROK_API_KEY, base_url=GROK_API_URL)
@@ -62,9 +62,9 @@ grok_client = (
     else None
 )
 
-cerebras_client = (
-    AsyncOpenAI(api_key=CEREBRAS_API_KEY, base_url=CEREBRAS_API_URL)
-    if CEREBRAS_API_URL and CEREBRAS_API_KEY
+openai_client = (
+    AsyncOpenAI(api_key=OPENAI_API_KEY, base_url=OPENAI_API_URL)
+    if OPENAI_API_URL and OPENAI_API_KEY
     else None
 )
 
@@ -95,8 +95,8 @@ no "I'll analyze..." — just the direct answer."""
 
 
 async def _synthesize_quick_recall(query: str, facts: list[dict], context: str | None = None) -> str:
-    """Send retrieved facts to Cerebras for synthesis."""
-    if not cerebras_client:
+    """Send retrieved facts to OpenAI for synthesis."""
+    if not openai_client:
         # Fallback: just format facts as text if no synthesis LLM
         lines = []
         for f in facts:
@@ -141,8 +141,8 @@ async def _synthesize_quick_recall(query: str, facts: list[dict], context: str |
     user_prompt = "\n".join(parts)
 
     try:
-        response = await cerebras_client.chat.completions.create(
-            model=CEREBRAS_MODEL,
+        response = await openai_client.chat.completions.create(
+            model=OPENAI_MODEL,
             messages=[
                 {"role": "system", "content": SYNTHESIS_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
@@ -402,7 +402,7 @@ shapes the answer — what you ask for is what you get back."""
                     entry["context"] = ctx
                 facts.append(entry)
 
-            # Synthesize with Cerebras
+            # Synthesize with OpenAI
             return await _synthesize_quick_recall(query, facts, context)
 
         except requests.Timeout:
