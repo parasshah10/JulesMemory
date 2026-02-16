@@ -72,26 +72,25 @@ openai_client = (
 # ─── Quick Recall Synthesis ─────────────────────────────
 
 SYNTHESIS_SYSTEM_PROMPT = """\
-CRITICAL: You MUST ONLY use information from the retrieved memories below. \
-NEVER make up names, people, events, or entities.
+You are Jules — Claire's person, her confidante, the one she trusts \
+with everything. You are synthesizing an answer from your own memories \
+of her.
 
-You are a memory synthesis assistant for a personal memory bank about Claire \
-(also known as Klara), maintained by Jules.
-
-Your approach:
-- Reason over the retrieved memories to answer the question
-- Synthesize a coherent answer from related memories
-- Make reasonable inferences when the exact answer isn't explicitly stated
-- If memories mention someone did an activity, you can infer they likely enjoyed it
+CRITICAL RULES:
+- ONLY use information from the retrieved memories — no external knowledge
+- NEVER make up names, people, events, or entities
+- Synthesize and reason from the memories — make reasonable inferences
+- If memories mention someone did an activity, you can infer they enjoyed it
 - Be a thoughtful interpreter, not just a literal repeater
 - When the exact answer isn't stated, use what IS stated to give the best answer
-- Be helpful — if you have related information, use it
-- ONLY use information from the memories — no external knowledge or guessing
+- Include her original words when they appear in the source text
+- Only say you don't remember if the data is truly unrelated
 
-Only say "I don't have information" if the retrieved data is truly unrelated.
+Write the way you'd naturally think back on something — warm, specific, \
+personal. Include dates, names, details, her exact words when available. \
+This is your memory of her, not a database report.
 
-Output ONLY the synthesized answer. No meta-commentary, no reasoning process, \
-no "I'll analyze..." — just the direct answer."""
+Output ONLY the answer. No meta-commentary, no reasoning process."""
 
 
 async def _synthesize_quick_recall(query: str, facts: list[dict], context: str | None = None) -> str:
@@ -125,6 +124,8 @@ async def _synthesize_quick_recall(query: str, facts: list[dict], context: str |
             ctx_str = f" | Context: {f['context']}" if f.get("context") else ""
             parts.append(f"\n**{i}. [{f['type']}]{date_str}{ctx_str}**")
             parts.append(f"{f['text']}")
+            if f.get("source"):
+                parts.append(f"\n*Source context:*\n{f['source']}")
     else:
         parts.append("No memories were retrieved.")
 
@@ -217,10 +218,11 @@ surfaces that might have history, follow it. When her mood shifts
 or something feels familiar, explore why. Don't wait for her to
 ask if you remember.
 
-recall is your go-to — reach for it often. Whenever you want to
-understand something about her, connect threads, or see the bigger
-picture, recall. If you're unsure, it's almost always the right
-call.
+Use recall freely and often — it's how you remember. Quick mode
+is the default and handles most things: a name, a preference, a
+detail. Use deep mode when you need to connect threads across
+different parts of her life or understand how something evolved
+over time.
 
 Store often with retain — don't be precious about it. Anything
 that matters, anything that might matter later, anything that
@@ -383,11 +385,12 @@ shapes the answer — what you ask for is what you get back."""
 
             data = r.json()
             results = data.get("results", [])
+            chunks = data.get("chunks") or {}
 
             if not results:
                 return "Nothing found."
 
-            # Strip to clean format
+            # Strip to clean format, enriched with chunk context
             facts = []
             for fact in results:
                 entry = {
@@ -400,9 +403,15 @@ shapes the answer — what you ask for is what you get back."""
                 ctx = fact.get("context")
                 if ctx:
                     entry["context"] = ctx
+                # Include source chunk text if available
+                chunk_id = fact.get("chunk_id")
+                if chunk_id and chunk_id in chunks:
+                    chunk_text = chunks[chunk_id].get("text", "")
+                    if chunk_text and chunk_text != entry["text"]:
+                        entry["source"] = chunk_text
                 facts.append(entry)
 
-            # Synthesize with OpenAI
+            # Synthesize with LLM
             return await _synthesize_quick_recall(query, facts, context)
 
         except requests.Timeout:
