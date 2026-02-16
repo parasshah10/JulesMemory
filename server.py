@@ -315,7 +315,6 @@ you can find it later."""
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         ],
-        "async": True,
     }
 
     try:
@@ -323,7 +322,7 @@ you can find it later."""
             f"{HINDSIGHT_BASE}/memories",
             json=body,
             headers=HINDSIGHT_HEADERS,
-            timeout=30,
+            timeout=120,
         )
         if r.status_code == 200:
             return "Stored."
