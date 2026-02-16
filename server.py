@@ -114,7 +114,6 @@ async def _synthesize_quick_recall(
     facts: list[dict],
     source_docs: dict[str, str],
     doc_labels: dict[str, str],
-    context: str | None = None,
 ) -> str:
     """Send retrieved facts + deduplicated source docs to LLM for synthesis."""
     if not openai_client:
@@ -134,8 +133,7 @@ async def _synthesize_quick_recall(
     )
     parts.append("Disposition: skepticism=2, literalism=2, empathy=5")
 
-    if context:
-        parts.append(f"\n## Additional Context\n{context}")
+
 
     # Source documents — each chunk listed ONCE
     if source_docs:
@@ -346,12 +344,12 @@ async def recall(
             )
         ),
     ],
-    context: Annotated[
-        Optional[str],
-        Field(
-            description="Why you're asking — background that frames the answer.",
-        ),
-    ] = None,
+    # context: Annotated[
+    #     Optional[str],
+    #     Field(
+    #         description="Why you're asking — background that frames the answer.",
+    #     ),
+    # ] = None,
     # deep: Annotated[
     #     bool,
     #     Field(
@@ -452,7 +450,7 @@ sharpens results. Simple checks and deep questions both work."""
 
             # Synthesize with LLM
             return await _synthesize_quick_recall(
-                query, facts, source_docs, doc_labels, context
+                query, facts, source_docs, doc_labels
             )
 
         except requests.Timeout:
